@@ -21,10 +21,12 @@ const io = new Server(server, {
 /**
  * [Data Structure]
  * groups: Map<hardwareId, { 
- *    master: socketId, 
+ *    master: socketId|null, 
  *    slaves: Set<socketId>, 
  *    syncCode: string|null, 
- *    expires: number|null 
+ *    expires: number|null,
+ *    temp_queue: Array<{msg, timestamp, ttl}>,
+ *    isOnline: boolean
  * }>
  * socketToId: Map<socketId, hardwareId>
  * syncCodes: Map<code, hardwareId>
@@ -32,6 +34,9 @@ const io = new Server(server, {
 const groups = new Map();
 const socketToId = new Map();
 const syncCodes = new Map();
+
+// 오프라인 메시지 TTL (10분)
+const MESSAGE_TTL = 10 * 60 * 1000;
 
 // 인증 코드 생성 함수 (6자리 난수)
 function generateSyncCode() {
@@ -48,11 +53,33 @@ io.on('connection', (socket) => {
         master: socket.id,
         slaves: new Set(),
         syncCode: null,
-        expires: null
+        expires: null,
+        temp_queue: [],
+        isOnline: true
       });
     } else {
       const group = groups.get(hardwareId);
       group.master = socket.id; // 기존 마스터 세션 갱신
+      group.isOnline = true;
+
+      // 🔥 Pull on Connect: 큐에 쌓인 메시지 즉시 플러시
+      if (group.temp_queue.length > 0) {
+        console.log(`📬 큐 플러시: ${group.temp_queue.length}개 메시지 전송 (${hardwareId})`);
+
+        // TTL 체크 후 유효한 메시지만 전송
+        const now = Date.now();
+        const validMessages = group.temp_queue.filter(item => now < item.ttl);
+
+        validMessages.forEach(item => {
+          io.to(socket.id).emit('push', item.msg);
+          // 슬레이브들에게도 전송
+          group.slaves.forEach(sid => io.to(sid).emit('push', item.msg));
+        });
+
+        // 큐 비우기
+        group.temp_queue = [];
+        console.log(`✅ 큐 비움 완료 (유효: ${validMessages.length}개)`);
+      }
     }
     socketToId.set(socket.id, hardwareId);
     console.log(`📱 Master 등록: ${hardwareId} -> ${socket.id}`);
@@ -135,11 +162,30 @@ io.on('connection', (socket) => {
     // 2. 수신자 그룹 전체에 전송
     if (toGroup) {
       const receivedData = { ...messagePayload, type: 'received' };
-      if (toGroup.master) io.to(toGroup.master).emit('push', receivedData);
-      toGroup.slaves.forEach(sid => io.to(sid).emit('push', receivedData));
-      console.log(`� Chat: ${fromId} -> ${toId}`);
+
+      // 🔥 Presence Tracking: 온라인 상태 확인
+      if (toGroup.isOnline && toGroup.master) {
+        // 온라인 → 즉시 전송
+        io.to(toGroup.master).emit('push', receivedData);
+        toGroup.slaves.forEach(sid => io.to(sid).emit('push', receivedData));
+        console.log(`💬 Chat: ${fromId} -> ${toId} (즉시 전송)`);
+      } else {
+        // 🔥 Dead-Letter Queue: 오프라인 → 큐에 저장
+        const queueItem = {
+          msg: receivedData,
+          timestamp: Date.now(),
+          ttl: Date.now() + MESSAGE_TTL
+        };
+        toGroup.temp_queue.push(queueItem);
+        console.log(`📦 큐 저장: ${fromId} -> ${toId} (오프라인, TTL: ${MESSAGE_TTL / 1000}초)`);
+
+        // TODO: FCM Push Notification 전송
+        // sendPushNotification(toId, { from: fromId, text });
+
+        socket.emit('queued', { message: "상대방이 오프라인입니다. 메시지가 큐에 저장되었습니다." });
+      }
     } else {
-      socket.emit('error_msg', { message: "상대방이 오프라인 상태이거나 존재하지 않습니다." });
+      socket.emit('error_msg', { message: "존재하지 않는 사용자입니다." });
     }
   });
 
@@ -152,9 +198,19 @@ io.on('connection', (socket) => {
     if (group) {
       if (group.master === socket.id) {
         console.log(`🔌 Master 연결 종료: ${hardwareId}`);
-        // 마스터 종료 시 그룹 전체를 해제하거나 마스터만 비움
-        // 설계에 따라 다르지만 정석대로라면 그룹 유지는 하되 마스터만 undefined
+        // 🔥 Presence Tracking: 오프라인 상태로 변경
         group.master = null;
+        group.isOnline = false;
+
+        // 만료된 큐 아이템 정리
+        const now = Date.now();
+        const beforeCount = group.temp_queue.length;
+        group.temp_queue = group.temp_queue.filter(item => now < item.ttl);
+        const afterCount = group.temp_queue.length;
+
+        if (beforeCount !== afterCount) {
+          console.log(`🗑️ 만료 메시지 삭제: ${beforeCount - afterCount}개 (남은: ${afterCount}개)`);
+        }
       } else {
         group.slaves.delete(socket.id);
         console.log(`🔌 Slave 연결 종료: ${socket.id} (Group ${hardwareId})`);
@@ -164,8 +220,9 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 80;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Simple_chat Master-Group Router running on port ${PORT}`);
   console.log(`🛡️ Hardware-ID Based, Zero Persistence, Real-time Relay.`);
+  console.log(`📦 Offline Queue System: TTL ${MESSAGE_TTL / 1000}s`);
 });

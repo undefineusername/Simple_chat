@@ -182,16 +182,42 @@
                 </div>
             </div>
 
-            <button id="codeBtn" onclick="requestCode()"
-                style="margin-top:15px; background: rgba(255,255,255,0.05); color: #94a3b8; font-size: 0.75rem;">PC 연동
-                코드 생성</button>
+            <div style="display:flex; gap: 8px; margin-top: 15px;">
+                <button id="codeBtn" onclick="requestCode()"
+                    style="flex: 1; background: rgba(255,255,255,0.05); color: #94a3b8; font-size: 0.75rem;">PC 연동 코드
+                    생성</button>
+                <button onclick="clearLocalData()"
+                    style="flex: 1; background: rgba(239, 68, 68, 0.1); color: #ef4444; font-size: 0.75rem; border: 1px solid rgba(239, 68, 68, 0.2);">데이터
+                    초기화</button>
+            </div>
         </div>
     </div>
 
     <script>
         let socket;
         let myId = "";
+        let myType = "";
         const SERVER_URL = "https://simple-chat-7044.onrender.com";
+
+        // 초기화: 저장된 데이터 불러오기
+        window.onload = () => {
+            const savedUser = JSON.parse(localStorage.getItem('sc_user') || 'null');
+            if (savedUser) {
+                myId = savedUser.id;
+                myType = savedUser.type;
+                initSocket();
+                if (myType === 'master') {
+                    socket.emit('register_master', myId);
+                } else {
+                    // 슬레이브는 연동 코드가 매번 바뀌므로 자동 재연동은 어려우나, 
+                    // ID가 저장되어 있으면 UI에서 보여줄 수 있음
+                    showZone('chat-zone');
+                    document.getElementById('status-text').innerText = `나의 ID: ${myId} (slave)`;
+                    document.getElementById('codeBtn').style.display = 'none';
+                }
+            }
+            loadChatHistory();
+        };
 
         function showZone(id) {
             document.querySelectorAll('.zone').forEach(z => z.classList.remove('active'));
@@ -204,9 +230,14 @@
 
             socket.on('registered', (data) => {
                 myId = data.hardwareId;
+                myType = data.type;
+
+                // 유저 정보 저장
+                localStorage.setItem('sc_user', JSON.stringify({ id: myId, type: myType }));
+
                 showZone('chat-zone');
-                document.getElementById('status-text').innerText = `나의 ID: ${myId} (${data.type})`;
-                if (data.type === 'slave') {
+                document.getElementById('status-text').innerText = `나의 ID: ${myId} (${myType})`;
+                if (myType === 'slave') {
                     document.getElementById('codeBtn').style.display = 'none';
                 }
             });
@@ -217,10 +248,9 @@
             });
 
             socket.on('push', (data) => {
-                // data 형식: { from, to, text, type, timestamp }
                 const type = data.type === 'sent' ? 'sent' : 'received';
                 const displaySender = type === 'sent' ? '나' : data.from;
-                addMessage(displaySender, data.text, type);
+                addMessage(displaySender, data.text, type, true);
             });
 
             socket.on('error_msg', (data) => alert(data.message));
@@ -251,17 +281,15 @@
             if (!text) return;
 
             if (!targetId) {
-                // 상대방 아이디가 없으면 내 기기들간의 메모용(Relay)으로 동작
                 socket.emit('message_relay', { text });
             } else {
-                // 상대방 아이디가 있으면 실제 채팅(Direct)으로 동작
                 socket.emit('direct_message', { toId: targetId, text });
             }
 
             document.getElementById('chatInput').value = '';
         }
 
-        function addMessage(sender, text, type) {
+        function addMessage(sender, text, type, save = false) {
             const msgArea = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = `msg ${type}`;
@@ -277,9 +305,34 @@
             div.appendChild(content);
             msgArea.appendChild(div);
             msgArea.scrollTop = msgArea.scrollHeight;
+
+            if (save) {
+                saveMessage(sender, text, type);
+            }
         }
 
-        // 엔터키 지원
+        function saveMessage(sender, text, type) {
+            const history = JSON.parse(localStorage.getItem('sc_history') || '[]');
+            history.push({ sender, text, type, time: Date.now() });
+            // 최근 100개만 유지
+            if (history.length > 100) history.shift();
+            localStorage.setItem('sc_history', JSON.stringify(history));
+        }
+
+        function loadChatHistory() {
+            const history = JSON.parse(localStorage.getItem('sc_history') || '[]');
+            history.forEach(msg => {
+                addMessage(msg.sender, msg.text, msg.type, false);
+            });
+        }
+
+        function clearLocalData() {
+            if (confirm('모든 로컬 데이터(ID, 채팅 내역)를 초기화할까요?')) {
+                localStorage.clear();
+                location.reload();
+            }
+        }
+
         document.getElementById('chatInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendMessage();
         });
