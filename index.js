@@ -99,26 +99,47 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ④ 스마트 데이터 토스 (message_relay) - 그룹 내 모든 기기에 브로드캐스트
+  // ④ 내부 동기화 (message_relay): 같은 HardwareID 그룹 내 모든 기기(폰+PC)에 전송
   socket.on('message_relay', (payload) => {
     const hardwareId = socketToId.get(socket.id);
     const group = groups.get(hardwareId);
-
     if (group) {
-      const targetMessage = {
-        ...payload,
-        timestamp: new Date().toISOString()
-      };
+      const data = { ...payload, from: hardwareId, type: 'sync', timestamp: new Date().toISOString() };
+      if (group.master) io.to(group.master).emit('push', data);
+      group.slaves.forEach(sid => io.to(sid).emit('push', data));
+    }
+  });
 
-      // 마스터에게 전송
-      io.to(group.master).emit('push', targetMessage);
+  // ⑤ 유저 간 채팅 (direct_message): 다른 HardwareID 그룹으로 전송
+  socket.on('direct_message', ({ toId, text }) => {
+    const fromId = socketToId.get(socket.id);
+    if (!fromId) return;
 
-      // 모든 슬레이브에게 전송
-      group.slaves.forEach(slaveId => {
-        io.to(slaveId).emit('push', targetMessage);
-      });
+    const fromGroup = groups.get(fromId);
+    const toGroup = groups.get(toId);
 
-      console.log(`📡 Relay [Group ${hardwareId}]: ${socket.id} -> All Devices`);
+    const messagePayload = {
+      from: fromId,
+      to: toId,
+      text: text,
+      timestamp: new Date().toISOString()
+    };
+
+    // 1. 발신자 그룹 전체에 전송 (내가 보낸 메시지 동기화)
+    if (fromGroup) {
+      const sentData = { ...messagePayload, type: 'sent' };
+      if (fromGroup.master) io.to(fromGroup.master).emit('push', sentData);
+      fromGroup.slaves.forEach(sid => io.to(sid).emit('push', sentData));
+    }
+
+    // 2. 수신자 그룹 전체에 전송
+    if (toGroup) {
+      const receivedData = { ...messagePayload, type: 'received' };
+      if (toGroup.master) io.to(toGroup.master).emit('push', receivedData);
+      toGroup.slaves.forEach(sid => io.to(sid).emit('push', receivedData));
+      console.log(`� Chat: ${fromId} -> ${toId}`);
+    } else {
+      socket.emit('error_msg', { message: "상대방이 오프라인 상태이거나 존재하지 않습니다." });
     }
   });
 
