@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simple_chat | Stateless Relay Test</title>
+    <title>Simple_chat | Master-Slave Relay</title>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         :root {
@@ -16,15 +16,14 @@
         }
 
         body {
-            font-family: 'Inter', -apple-system, system-ui, sans-serif;
+            font-family: 'Inter', system-ui, sans-serif;
             background-color: var(--bg-color);
             color: var(--text-color);
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
-            overflow: hidden;
         }
 
         .container {
@@ -36,14 +35,9 @@
             border-radius: 24px;
             padding: 30px;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            display: flex;
-            flex-direction: column;
-            height: 80vh;
         }
 
         h1 {
-            font-size: 1.5rem;
-            margin-bottom: 20px;
             text-align: center;
             background: linear-gradient(to right, var(--primary-color), var(--accent-color));
             -webkit-background-clip: text;
@@ -51,32 +45,23 @@
             font-weight: 800;
         }
 
-        .setup-zone,
-        .chat-zone {
-            display: flex;
+        .zone {
+            display: none;
             flex-direction: column;
             gap: 15px;
         }
 
-        .chat-zone {
-            flex-grow: 1;
-            display: none;
-            overflow: hidden;
+        .active {
+            display: flex;
         }
 
         input {
             background: rgba(15, 23, 42, 0.6);
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 12px;
-            padding: 12px 16px;
+            padding: 12px;
             color: white;
             outline: none;
-            transition: all 0.3s;
-        }
-
-        input:focus {
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
         }
 
         button {
@@ -87,76 +72,40 @@
             color: white;
             font-weight: 600;
             cursor: pointer;
-            transition: transform 0.2s, opacity 0.2s;
-        }
-
-        button:hover {
-            opacity: 0.9;
-            transform: translateY(-1px);
-        }
-
-        button:active {
-            transform: translateY(0);
         }
 
         #messages {
-            flex-grow: 1;
+            height: 200px;
             overflow-y: auto;
-            margin: 15px 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 10px;
+            margin: 10px 0;
             display: flex;
             flex-direction: column;
-            gap: 10px;
-            padding-right: 5px;
-        }
-
-        #messages::-webkit-scrollbar {
-            width: 4px;
-        }
-
-        #messages::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
+            gap: 5px;
         }
 
         .msg {
-            max-width: 80%;
-            padding: 10px 14px;
-            border-radius: 16px;
             font-size: 0.9rem;
-            line-height: 1.4;
-            animation: fadeIn 0.3s ease;
-        }
-
-        .msg.sent {
-            align-self: flex-end;
-            background: var(--primary-color);
-            color: #0f172a;
-            border-bottom-right-radius: 4px;
-        }
-
-        .msg.received {
-            align-self: flex-start;
-            background: rgba(255, 255, 255, 0.1);
-            border-bottom-left-radius: 4px;
+            padding: 5px 10px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
         }
 
         .status {
-            font-size: 0.75rem;
-            text-align: center;
+            font-size: 0.8rem;
             color: #64748b;
-            margin-bottom: 10px;
+            text-align: center;
         }
 
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+        .code-display {
+            font-size: 2rem;
+            text-align: center;
+            letter-spacing: 5px;
+            font-weight: bold;
+            color: var(--primary-color);
+            margin: 10px 0;
         }
     </style>
 </head>
@@ -166,22 +115,40 @@
     <div class="container">
         <h1>Simple_chat</h1>
 
-        <div id="setup" class="setup-zone">
-            <div class="status">전원이 꺼지면 흔적이 사라지는 보안 채팅</div>
-            <input type="text" id="myUuid" placeholder="나의 ID (예: user1)" value="">
-            <button onclick="connect()">채팅 시작하기</button>
+        <!-- 모드 선택 -->
+        <div id="mode-zone" class="zone active">
+            <p class="status">접속 방식을 선택하세요</p>
+            <button onclick="showZone('master-setup')">📱 모바일 (Master)</button>
+            <button onclick="showZone('slave-setup')" style="background: #1e293b; border: 1px solid #334155;">💻 PC웹
+                (Slave)</button>
         </div>
 
-        <div id="chat" class="chat-zone">
-            <div id="connection-status" class="status">연결됨: <span id="display-id"></span></div>
-            <div id="messages"></div>
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-                <input type="text" id="targetUuid" placeholder="상대방 ID">
-                <div style="display: flex; gap: 8px;">
-                    <input type="text" id="msgInput" placeholder="메시지 입력..." style="flex-grow: 1;">
-                    <button onclick="send()" style="width: 60px;">전송</button>
-                </div>
+        <!-- Master 설정 -->
+        <div id="master-setup" class="zone">
+            <input type="text" id="hwId" placeholder="Hardware ID (예: ANDROID_123)">
+            <button onclick="registerMaster()">Master 등록</button>
+        </div>
+
+        <!-- Slave 설정 -->
+        <div id="slave-setup" class="zone">
+            <input type="text" id="syncCode" placeholder="연동 코드 6자리 입력">
+            <button onclick="linkPc()">PC 연동하기</button>
+        </div>
+
+        <!-- 채팅창 -->
+        <div id="chat-zone" class="zone">
+            <div id="status-text" class="status"></div>
+            <div id="sync-area" style="display:none;">
+                <p class="status">PC 연동 코드</p>
+                <div id="display-code" class="code-display">------</div>
             </div>
+            <div id="messages"></div>
+            <div style="display:flex; gap: 8px;">
+                <input type="text" id="chatInput" style="flex-grow:1;" placeholder="메시지 입력...">
+                <button onclick="sendMessage()">토스</button>
+            </div>
+            <button id="codeBtn" onclick="requestCode()" style="margin-top:10px; font-size: 0.8rem; padding: 5px;">연동 코드
+                생성</button>
         </div>
     </div>
 
@@ -189,60 +156,62 @@
         let socket;
         const SERVER_URL = "https://simple-chat-7044.onrender.com";
 
-        function connect() {
-            const uuid = document.getElementById('myUuid').value;
-            if (!uuid) return alert("ID를 입력해 주세요.");
+        function showZone(id) {
+            document.querySelectorAll('.zone').forEach(z => z.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+        }
 
+        function initSocket() {
+            if (socket) return;
             socket = io(SERVER_URL);
 
-            socket.on('connect', () => {
-                socket.emit('register', uuid);
+            socket.on('registered', (data) => {
+                showZone('chat-zone');
+                document.getElementById('status-text').innerText = `모드: ${data.type} / ID: ${data.hardwareId}`;
+                if (data.type === 'slave') {
+                    document.getElementById('codeBtn').style.display = 'none';
+                }
             });
 
-            socket.on('registered', () => {
-                document.getElementById('setup').style.display = 'none';
-                document.getElementById('chat').style.display = 'flex';
-                document.getElementById('display-id').innerText = uuid;
+            socket.on('sync_code', (data) => {
+                document.getElementById('sync-area').style.display = 'block';
+                document.getElementById('display-code').innerText = data.code;
             });
 
             socket.on('push', (data) => {
-                addMessage(data.from, data.text, 'received');
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'msg';
+                msgDiv.innerText = `${data.text}`;
+                document.getElementById('messages').appendChild(msgDiv);
             });
 
-            socket.on('error_msg', (data) => {
-                alert(data.message);
-            });
+            socket.on('error_msg', (data) => alert(data.message));
         }
 
-        function send() {
-            const to = document.getElementById('targetUuid').value;
-            const text = document.getElementById('msgInput').value;
-            const from = document.getElementById('myUuid').value;
-
-            if (!to || !text) return;
-
-            socket.emit('relay', {
-                toUuid: to,
-                data: { from, text }
-            });
-
-            addMessage('나', text, 'sent');
-            document.getElementById('msgInput').value = '';
+        function registerMaster() {
+            const id = document.getElementById('hwId').value;
+            if (!id) return;
+            initSocket();
+            socket.emit('register_master', id);
         }
 
-        function addMessage(sender, text, type) {
-            const container = document.getElementById('messages');
-            const div = document.createElement('div');
-            div.className = `msg ${type}`;
-            div.innerHTML = `<strong>${sender}:</strong> ${text}`;
-            container.appendChild(div);
-            container.scrollTop = container.scrollHeight;
+        function requestCode() {
+            socket.emit('request_sync_code');
         }
 
-        // 엔터키 지원
-        document.getElementById('msgInput')?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') send();
-        });
+        function linkPc() {
+            const code = document.getElementById('syncCode').value;
+            if (!code) return;
+            initSocket();
+            socket.emit('link_pc', code.toUpperCase());
+        }
+
+        function sendMessage() {
+            const text = document.getElementById('chatInput').value;
+            if (!text) return;
+            socket.emit('message_relay', { text });
+            document.getElementById('chatInput').value = '';
+        }
     </script>
 
 </body>
