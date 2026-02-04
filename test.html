@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple_chat | Stateless Relay Test</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --primary-color: #38bdf8;
+            --text-color: #f1f5f9;
+            --accent-color: #818cf8;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, system-ui, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 450px;
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            padding: 30px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            height: 80vh;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            text-align: center;
+            background: linear-gradient(to right, var(--primary-color), var(--accent-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 800;
+        }
+
+        .setup-zone, .chat-zone {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .chat-zone {
+            flex-grow: 1;
+            display: none;
+            overflow: hidden;
+        }
+
+        input {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 12px 16px;
+            color: white;
+            outline: none;
+            transition: all 0.3s;
+        }
+
+        input:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+        }
+
+        button {
+            background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+            border: none;
+            border-radius: 12px;
+            padding: 12px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        #messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            margin: 15px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding-right: 5px;
+        }
+
+        #messages::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        #messages::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        .msg {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: 16px;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .msg.sent {
+            align-self: flex-end;
+            background: var(--primary-color);
+            color: #0f172a;
+            border-bottom-right-radius: 4px;
+        }
+
+        .msg.received {
+            align-self: flex-start;
+            background: rgba(255, 255, 255, 0.1);
+            border-bottom-left-radius: 4px;
+        }
+
+        .status {
+            font-size: 0.75rem;
+            text-align: center;
+            color: #64748b;
+            margin-bottom: 10px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Simple_chat</h1>
+    
+    <div id="setup" class="setup-zone">
+        <div class="status">전원이 꺼지면 흔적이 사라지는 보안 채팅</div>
+        <input type="text" id="myUuid" placeholder="나의 ID (예: user1)" value="">
+        <button onclick="connect()">채팅 시작하기</button>
+    </div>
+
+    <div id="chat" class="chat-zone">
+        <div id="connection-status" class="status">연결됨: <span id="display-id"></span></div>
+        <div id="messages"></div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+            <input type="text" id="targetUuid" placeholder="상대방 ID">
+            <div style="display: flex; gap: 8px;">
+                <input type="text" id="msgInput" placeholder="메시지 입력..." style="flex-grow: 1;">
+                <button onclick="send()" style="width: 60px;">전송</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let socket;
+    const SERVER_URL = "http://localhost:3000";
+
+    function connect() {
+        const uuid = document.getElementById('myUuid').value;
+        if (!uuid) return alert("ID를 입력해 주세요.");
+
+        socket = io(SERVER_URL);
+
+        socket.on('connect', () => {
+            socket.emit('register', uuid);
+        });
+
+        socket.on('registered', () => {
+            document.getElementById('setup').style.display = 'none';
+            document.getElementById('chat').style.display = 'flex';
+            document.getElementById('display-id').innerText = uuid;
+        });
+
+        socket.on('push', (data) => {
+            addMessage(data.from, data.text, 'received');
+        });
+
+        socket.on('error_msg', (data) => {
+            alert(data.message);
+        });
+    }
+
+    function send() {
+        const to = document.getElementById('targetUuid').value;
+        const text = document.getElementById('msgInput').value;
+        const from = document.getElementById('myUuid').value;
+
+        if (!to || !text) return;
+
+        socket.emit('relay', {
+            toUuid: to,
+            data: { from, text }
+        });
+
+        addMessage('나', text, 'sent');
+        document.getElementById('msgInput').value = '';
+    }
+
+    function addMessage(sender, text, type) {
+        const container = document.getElementById('messages');
+        const div = document.createElement('div');
+        div.className = `msg ${type}`;
+        div.innerHTML = `<strong>${sender}:</strong> ${text}`;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    // 엔터키 지원
+    document.getElementById('msgInput')?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') send();
+    });
+</script>
+
+</body>
+</html>
