@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -50,7 +51,8 @@
             font-weight: 800;
         }
 
-        .setup-zone, .chat-zone {
+        .setup-zone,
+        .chat-zone {
             display: flex;
             flex-direction: column;
             gap: 15px;
@@ -146,94 +148,103 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
     </style>
 </head>
+
 <body>
 
-<div class="container">
-    <h1>Simple_chat</h1>
-    
-    <div id="setup" class="setup-zone">
-        <div class="status">전원이 꺼지면 흔적이 사라지는 보안 채팅</div>
-        <input type="text" id="myUuid" placeholder="나의 ID (예: user1)" value="">
-        <button onclick="connect()">채팅 시작하기</button>
-    </div>
+    <div class="container">
+        <h1>Simple_chat</h1>
 
-    <div id="chat" class="chat-zone">
-        <div id="connection-status" class="status">연결됨: <span id="display-id"></span></div>
-        <div id="messages"></div>
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-            <input type="text" id="targetUuid" placeholder="상대방 ID">
-            <div style="display: flex; gap: 8px;">
-                <input type="text" id="msgInput" placeholder="메시지 입력..." style="flex-grow: 1;">
-                <button onclick="send()" style="width: 60px;">전송</button>
+        <div id="setup" class="setup-zone">
+            <div class="status">전원이 꺼지면 흔적이 사라지는 보안 채팅</div>
+            <input type="text" id="myUuid" placeholder="나의 ID (예: user1)" value="">
+            <button onclick="connect()">채팅 시작하기</button>
+        </div>
+
+        <div id="chat" class="chat-zone">
+            <div id="connection-status" class="status">연결됨: <span id="display-id"></span></div>
+            <div id="messages"></div>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <input type="text" id="targetUuid" placeholder="상대방 ID">
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" id="msgInput" placeholder="메시지 입력..." style="flex-grow: 1;">
+                    <button onclick="send()" style="width: 60px;">전송</button>
+                </div>
             </div>
         </div>
     </div>
-</div>
 
-<script>
-    let socket;
-    const SERVER_URL = "http://localhost:3000";
+    <script>
+        let socket;
+        const SERVER_URL = "https://simple-chat-7044.onrender.com";
 
-    function connect() {
-        const uuid = document.getElementById('myUuid').value;
-        if (!uuid) return alert("ID를 입력해 주세요.");
+        function connect() {
+            const uuid = document.getElementById('myUuid').value;
+            if (!uuid) return alert("ID를 입력해 주세요.");
 
-        socket = io(SERVER_URL);
+            socket = io(SERVER_URL);
 
-        socket.on('connect', () => {
-            socket.emit('register', uuid);
+            socket.on('connect', () => {
+                socket.emit('register', uuid);
+            });
+
+            socket.on('registered', () => {
+                document.getElementById('setup').style.display = 'none';
+                document.getElementById('chat').style.display = 'flex';
+                document.getElementById('display-id').innerText = uuid;
+            });
+
+            socket.on('push', (data) => {
+                addMessage(data.from, data.text, 'received');
+            });
+
+            socket.on('error_msg', (data) => {
+                alert(data.message);
+            });
+        }
+
+        function send() {
+            const to = document.getElementById('targetUuid').value;
+            const text = document.getElementById('msgInput').value;
+            const from = document.getElementById('myUuid').value;
+
+            if (!to || !text) return;
+
+            socket.emit('relay', {
+                toUuid: to,
+                data: { from, text }
+            });
+
+            addMessage('나', text, 'sent');
+            document.getElementById('msgInput').value = '';
+        }
+
+        function addMessage(sender, text, type) {
+            const container = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = `msg ${type}`;
+            div.innerHTML = `<strong>${sender}:</strong> ${text}`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 엔터키 지원
+        document.getElementById('msgInput')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') send();
         });
-
-        socket.on('registered', () => {
-            document.getElementById('setup').style.display = 'none';
-            document.getElementById('chat').style.display = 'flex';
-            document.getElementById('display-id').innerText = uuid;
-        });
-
-        socket.on('push', (data) => {
-            addMessage(data.from, data.text, 'received');
-        });
-
-        socket.on('error_msg', (data) => {
-            alert(data.message);
-        });
-    }
-
-    function send() {
-        const to = document.getElementById('targetUuid').value;
-        const text = document.getElementById('msgInput').value;
-        const from = document.getElementById('myUuid').value;
-
-        if (!to || !text) return;
-
-        socket.emit('relay', {
-            toUuid: to,
-            data: { from, text }
-        });
-
-        addMessage('나', text, 'sent');
-        document.getElementById('msgInput').value = '';
-    }
-
-    function addMessage(sender, text, type) {
-        const container = document.getElementById('messages');
-        const div = document.createElement('div');
-        div.className = `msg ${type}`;
-        div.innerHTML = `<strong>${sender}:</strong> ${text}`;
-        container.appendChild(div);
-        container.scrollTop = container.scrollHeight;
-    }
-
-    // 엔터키 지원
-    document.getElementById('msgInput')?.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') send();
-    });
-</script>
+    </script>
 
 </body>
+
 </html>

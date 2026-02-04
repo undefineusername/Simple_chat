@@ -2,9 +2,15 @@ const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 app.use(cors());
+
+// [추가] test.html을 기본 페이지로 제공
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'test.html'));
+});
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -52,8 +58,10 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = 3000;
+// [변경] 포트를 80으로 설정 (환경 변수 PORT가 있으면 우선 사용)
+const PORT = process.env.PORT || 80;
+
 server.listen(PORT, () => {
   console.log(`🚀 Stateless Relay Server running on port ${PORT}`);
-  console.log("🛡️ No storage, No logs, Only real-time routing.");
+  console.log(`🔗 접속 주소: http://localhost${PORT === 80 ? '' : ':' + PORT}`);
 });
