@@ -15,6 +15,7 @@
             --accent-color: #818cf8;
             --sent-msg: #38bdf8;
             --received-msg: #334155;
+            --unread-badge: #ef4444;
         }
 
         body {
@@ -76,6 +77,15 @@
             color: white;
             font-weight: 600;
             cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+        }
+
+        button:active {
+            transform: translateY(0);
         }
 
         #messages {
@@ -97,6 +107,7 @@
             font-size: 0.9rem;
             line-height: 1.4;
             word-break: break-all;
+            position: relative;
         }
 
         .msg.sent {
@@ -117,6 +128,19 @@
             font-size: 0.7rem;
             opacity: 0.7;
             margin-bottom: 2px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .unread-badge {
+            background: var(--unread-badge);
+            color: white;
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: 700;
+            margin-left: 6px;
         }
 
         .status {
@@ -132,6 +156,59 @@
             font-weight: bold;
             color: var(--primary-color);
             margin: 10px 0;
+        }
+
+        /* 읽지 않은 메시지 카운터 */
+        .unread-counter {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 12px;
+            margin: 10px 0;
+            display: none;
+        }
+
+        .unread-counter.active {
+            display: block;
+        }
+
+        .unread-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            margin: 4px 0;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .unread-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .unread-item .name {
+            font-weight: 600;
+            color: var(--text-color);
+        }
+
+        .unread-item .count {
+            background: var(--unread-badge);
+            color: white;
+            font-size: 0.75rem;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-weight: 700;
+            min-width: 20px;
+            text-align: center;
+        }
+
+        .read-receipt {
+            font-size: 0.7rem;
+            color: #10b981;
+            text-align: center;
+            padding: 4px;
+            opacity: 0.8;
         }
     </style>
 </head>
@@ -172,6 +249,13 @@
                 <div id="display-code" class="code-display">------</div>
             </div>
 
+            <!-- 읽지 않은 메시지 카운터 -->
+            <div id="unread-counter" class="unread-counter">
+                <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 8px; font-weight: 600;">📬 읽지 않은 메시지
+                </div>
+                <div id="unread-list"></div>
+            </div>
+
             <div id="messages"></div>
 
             <div style="display:flex; flex-direction: column; gap: 8px;">
@@ -186,6 +270,9 @@
                 <button id="codeBtn" onclick="requestCode()"
                     style="flex: 1; background: rgba(255,255,255,0.05); color: #94a3b8; font-size: 0.75rem;">PC 연동 코드
                     생성</button>
+                <button onclick="refreshUnreadCounts()"
+                    style="flex: 1; background: rgba(56, 189, 248, 0.1); color: #38bdf8; font-size: 0.75rem; border: 1px solid rgba(56, 189, 248, 0.2);">📊
+                    읽지않음 새로고침</button>
                 <button onclick="clearLocalData()"
                     style="flex: 1; background: rgba(239, 68, 68, 0.1); color: #ef4444; font-size: 0.75rem; border: 1px solid rgba(239, 68, 68, 0.2);">데이터
                     초기화</button>
@@ -197,7 +284,9 @@
         let socket;
         let myId = "";
         let myType = "";
-        const SERVER_URL = "https://simple-chat-7044.onrender.com";
+        let currentChatWith = ""; // 현재 대화 중인 상대
+        let unreadCounts = {}; // 읽지 않은 메시지 수 저장
+        const SERVER_URL = "http://localhost:3000";
 
         // 초기화: 저장된 데이터 불러오기
         window.onload = () => {
@@ -209,8 +298,6 @@
                 if (myType === 'master') {
                     socket.emit('register_master', myId);
                 } else {
-                    // 슬레이브는 연동 코드가 매번 바뀌므로 자동 재연동은 어려우나, 
-                    // ID가 저장되어 있으면 UI에서 보여줄 수 있음
                     showZone('chat-zone');
                     document.getElementById('status-text').innerText = `나의 ID: ${myId} (slave)`;
                     document.getElementById('codeBtn').style.display = 'none';
@@ -240,6 +327,9 @@
                 if (myType === 'slave') {
                     document.getElementById('codeBtn').style.display = 'none';
                 }
+
+                // 등록 후 읽지 않은 메시지 수 조회
+                setTimeout(() => refreshUnreadCounts(), 500);
             });
 
             socket.on('sync_code', (data) => {
@@ -248,9 +338,28 @@
             });
 
             socket.on('push', (data) => {
+                if (data.type === 'read_receipt') {
+                    // 읽음 확인 메시지
+                    addReadReceipt(data.fromId);
+                    return;
+                }
+
                 const type = data.type === 'sent' ? 'sent' : 'received';
                 const displaySender = type === 'sent' ? '나' : data.from;
-                addMessage(displaySender, data.text, type, true);
+                const unreadCount = data.unreadCount || 0;
+
+                addMessage(displaySender, data.text, type, unreadCount, true);
+
+                // 받은 메시지인 경우 읽지 않은 메시지 수 업데이트
+                if (type === 'received') {
+                    unreadCounts[data.from] = unreadCount;
+                    updateUnreadCounterUI();
+                }
+            });
+
+            socket.on('unread_counts', (counts) => {
+                unreadCounts = counts;
+                updateUnreadCounterUI();
             });
 
             socket.on('error_msg', (data) => alert(data.message));
@@ -284,19 +393,31 @@
                 socket.emit('message_relay', { text });
             } else {
                 socket.emit('direct_message', { toId: targetId, text });
+                currentChatWith = targetId;
             }
 
             document.getElementById('chatInput').value = '';
         }
 
-        function addMessage(sender, text, type, save = false) {
+        function addMessage(sender, text, type, unreadCount = 0, save = false) {
             const msgArea = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = `msg ${type}`;
 
             const info = document.createElement('div');
             info.className = 'msg-info';
-            info.innerText = sender;
+
+            const senderSpan = document.createElement('span');
+            senderSpan.innerText = sender;
+            info.appendChild(senderSpan);
+
+            // 읽지 않은 메시지 수 표시 (받은 메시지만)
+            if (type === 'received' && unreadCount > 0) {
+                const badge = document.createElement('span');
+                badge.className = 'unread-badge';
+                badge.innerText = unreadCount;
+                info.appendChild(badge);
+            }
 
             const content = document.createElement('div');
             content.innerText = text;
@@ -311,6 +432,66 @@
             }
         }
 
+        function addReadReceipt(fromId) {
+            const msgArea = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = 'read-receipt';
+            div.innerText = `✓✓ ${fromId}님이 메시지를 읽었습니다`;
+            msgArea.appendChild(div);
+            msgArea.scrollTop = msgArea.scrollHeight;
+        }
+
+        function markAsRead(fromId) {
+            if (!socket) return;
+            socket.emit('mark_as_read', fromId);
+
+            // 로컬에서도 즉시 업데이트
+            delete unreadCounts[fromId];
+            updateUnreadCounterUI();
+
+            // 대화 상대 설정
+            document.getElementById('targetId').value = fromId;
+            currentChatWith = fromId;
+        }
+
+        function refreshUnreadCounts() {
+            if (!socket) return;
+            socket.emit('get_unread_counts');
+        }
+
+        function updateUnreadCounterUI() {
+            const counterDiv = document.getElementById('unread-counter');
+            const listDiv = document.getElementById('unread-list');
+
+            listDiv.innerHTML = '';
+
+            const hasUnread = Object.keys(unreadCounts).length > 0;
+
+            if (hasUnread) {
+                counterDiv.classList.add('active');
+
+                for (const [fromId, count] of Object.entries(unreadCounts)) {
+                    const item = document.createElement('div');
+                    item.className = 'unread-item';
+                    item.onclick = () => markAsRead(fromId);
+
+                    const name = document.createElement('span');
+                    name.className = 'name';
+                    name.innerText = fromId;
+
+                    const countBadge = document.createElement('span');
+                    countBadge.className = 'count';
+                    countBadge.innerText = count;
+
+                    item.appendChild(name);
+                    item.appendChild(countBadge);
+                    listDiv.appendChild(item);
+                }
+            } else {
+                counterDiv.classList.remove('active');
+            }
+        }
+
         function saveMessage(sender, text, type) {
             const history = JSON.parse(localStorage.getItem('sc_history') || '[]');
             history.push({ sender, text, type, time: Date.now() });
@@ -322,7 +503,7 @@
         function loadChatHistory() {
             const history = JSON.parse(localStorage.getItem('sc_history') || '[]');
             history.forEach(msg => {
-                addMessage(msg.sender, msg.text, msg.type, false);
+                addMessage(msg.sender, msg.text, msg.type, 0, false);
             });
         }
 
@@ -336,6 +517,13 @@
         document.getElementById('chatInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendMessage();
         });
+
+        // 주기적으로 읽지 않은 메시지 수 업데이트 (30초마다)
+        setInterval(() => {
+            if (socket && myId) {
+                refreshUnreadCounts();
+            }
+        }, 30000);
     </script>
 
 </body>
