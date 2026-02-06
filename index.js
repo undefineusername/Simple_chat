@@ -16,10 +16,14 @@ const crypto = require('crypto');
 const app = express();
 app.use(cors());
 
+// Health Check
+app.get('/ping', (req, res) => res.send('pong'));
+
 // 정적 파일 서빙: test.html
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'test.html'));
 });
+
 
 const server = http.createServer(app);
 const io = new Server(server, {
