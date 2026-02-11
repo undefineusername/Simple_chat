@@ -6,6 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Simple_chat | Stateless Relay</title>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/argon2-browser@1.18.0/dist/argon2-bundled.min.js"></script>
+    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
     <style>
         :root {
             --bg-color: #0f172a;
@@ -228,8 +230,16 @@
 
         <!-- Master 설정 -->
         <div id="master-setup" class="zone">
-            <input type="text" id="hwId" placeholder="내 고유 ID (예: user_a)">
-            <button onclick="registerMaster()">Master 등록</button>
+            <p class="status">처음이라면 정보를 입력하고 [신규 생성]을,<br>기존 계정이라면 ID 입력 후 [Salt 조회]를 하세요.</p>
+            <input type="text" id="hwId" placeholder="고유 ID (Username)">
+            <input type="password" id="hwSecret" placeholder="Passphrase (Key Derivation 용)">
+            <div style="display:flex; gap: 8px;">
+                <button id="lookupBtn" onclick="lookupSalt()" style="flex:1; background: #1e293b;">🔍 Salt 조회</button>
+                <button id="regBtn" onclick="registerMaster(true)" style="flex:1;">✨ 신규 생성</button>
+            </div>
+            <button id="loginBtn" onclick="registerMaster(false)" style="display:none; width:100%; margin-top:8px;">🔓
+                로그인</button>
+            <p id="reg-status" class="status" style="margin-top: 5px;"></p>
         </div>
 
         <!-- Slave 설정 -->
@@ -240,7 +250,12 @@
 
         <!-- 채팅창 -->
         <div id="chat-zone" class="zone">
-            <div id="status-text" class="status"></div>
+            <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div id="status-text" class="status" style="margin:0; text-align: left;"></div>
+                <button onclick="copyMyId()"
+                    style="padding: 4px 8px; font-size: 0.7rem; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.2); color: var(--primary-color);">📋
+                    ID 복사</button>
+            </div>
 
             <!-- PC 연동 코드 표시 영역 (마스터만) -->
             <div id="sync-area"
@@ -258,57 +273,86 @@
 
             <div id="messages"></div>
 
-            <div style="display:flex; flex-direction: column; gap: 8px;">
-                <input type="text" id="targetId" placeholder="상대방 고유 ID 입력">
+            <div
+                style="display:flex; flex-direction: column; gap: 8px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 12px; margin-top: 10px;">
                 <div style="display:flex; gap: 8px;">
-                    <input type="text" id="chatInput" style="flex-grow:1;" placeholder="메시지 입력...">
-                    <button onclick="sendMessage()">전송</button>
+                    <input type="text" id="findUsername" style="flex-grow:1; font-size: 0.8rem;"
+                        placeholder="찾을 Username 입력...">
+                    <button onclick="findUserByUsername()"
+                        style="padding: 8px 12px; font-size: 0.8rem; background: #1e293b;">🔍 찾기</button>
                 </div>
+                <div style="display:flex; gap: 8px; align-items: center;">
+                    <input type="text" id="targetId" style="flex:2;" placeholder="상대방 고유 ID (UUID)">
+                    <input type="password" id="chatSecret" style="flex:1; font-size: 0.75rem;"
+                        placeholder="🔑 Chat Secret (E2EE)">
+                </div>
+                <p class="status" style="font-size: 0.65rem; margin:0;">* 대화 상대와 동일한 'Chat Secret'을 입력해야 메시지를 읽을 수 있습니다.
+                </p>
             </div>
-
-            <div style="display:flex; gap: 8px; margin-top: 15px;">
-                <button id="codeBtn" onclick="requestCode()"
-                    style="flex: 1; background: rgba(255,255,255,0.05); color: #94a3b8; font-size: 0.75rem;">PC 연동 코드
-                    생성</button>
-                <button onclick="refreshUnreadCounts()"
-                    style="flex: 1; background: rgba(56, 189, 248, 0.1); color: #38bdf8; font-size: 0.75rem; border: 1px solid rgba(56, 189, 248, 0.2);">📊
-                    읽지않음 새로고침</button>
-                <button onclick="clearLocalData()"
-                    style="flex: 1; background: rgba(239, 68, 68, 0.1); color: #ef4444; font-size: 0.75rem; border: 1px solid rgba(239, 68, 68, 0.2);">데이터
-                    초기화</button>
+            <div style="display:flex; gap: 8px;">
+                <input type="text" id="chatInput" style="flex-grow:1;" placeholder="메시지 입력...">
+                <button onclick="sendMessage()">전송</button>
             </div>
         </div>
+
+        <div style="display:flex; gap: 8px; margin-top: 15px;">
+            <button id="codeBtn" onclick="requestCode()"
+                style="flex: 1; background: rgba(255,255,255,0.05); color: #94a3b8; font-size: 0.75rem;">PC 연동 코드
+                생성</button>
+            <button onclick="refreshUnreadCounts()"
+                style="flex: 1; background: rgba(56, 189, 248, 0.1); color: #38bdf8; font-size: 0.75rem; border: 1px solid rgba(56, 189, 248, 0.2);">📊
+                읽지않음 새로고침</button>
+            <button onclick="clearLocalData()"
+                style="flex: 1; background: rgba(239, 68, 68, 0.1); color: #ef4444; font-size: 0.75rem; border: 1px solid rgba(239, 68, 68, 0.2);">데이터
+                초기화</button>
+        </div>
+    </div>
     </div>
 
     <script>
         let socket;
-        let myId = "";
-        let myType = "";
-        let currentChatWith = ""; // 현재 대화 중인 상대
-        let unreadCounts = {}; // 읽지 않은 메시지 수 저장
+        let myId = ""; // AccountUUID (Server ID)
+        let myKey = null; // CryptoKey (Local Only)
+        let unreadCounts = {};
         const SERVER_URL = "http://localhost:3000";
 
-        // 초기화: 저장된 데이터 불러오기
+        // 1. Initialize IndexedDB (Dexie)
+        const db = new Dexie("SimpleChatDB");
+        db.version(2).stores({
+            messages: "++id, msgId, from, to, timestamp, text, type, status"
+        }).upgrade(tx => {
+            // Optional: Migrate old version 1 data if needed
+            return tx.table("messages").toCollection().modify(m => {
+                if (!m.status) m.status = 'delivered';
+                if (!m.msgId) m.msgId = 'legacy-' + Math.random().toString(36).substr(2, 9);
+            });
+        });
+
         window.onload = () => {
-            const savedUser = JSON.parse(localStorage.getItem('sc_user') || 'null');
-            if (savedUser) {
-                myId = savedUser.id;
-                myType = savedUser.type;
-                initSocket();
-                if (myType === 'master') {
-                    socket.emit('register_master', myId);
-                } else {
-                    showZone('chat-zone');
-                    document.getElementById('status-text').innerText = `나의 ID: ${myId} (slave)`;
-                    document.getElementById('codeBtn').style.display = 'none';
-                }
-            }
             loadChatHistory();
         };
 
-        function showZone(id) {
-            document.querySelectorAll('.zone').forEach(z => z.classList.remove('active'));
-            document.getElementById(id).classList.add('active');
+        // 2. Recovery Logic: Lookup Salt
+        function lookupSalt() {
+            const username = document.getElementById('hwId').value;
+            if (!username) return alert("ID(Username)를 입력하세요.");
+
+            initSocket();
+            socket.emit('get_salt', username);
+
+            socket.on('salt_found', (data) => {
+                alert("기존 계정을 찾았습니다. Passphrase를 입력하고 [로그인] 하세요.");
+                window.lastSalt = data.salt;
+                window.lastParams = data.kdfParams;
+                document.getElementById('loginBtn').style.display = 'block';
+                document.getElementById('regBtn').style.display = 'none';
+            });
+
+            socket.on('salt_not_found', () => {
+                alert("계정을 찾을 수 없습니다. [신규 생성]을 진행하세요.");
+                document.getElementById('loginBtn').style.display = 'none';
+                document.getElementById('regBtn').style.display = 'block';
+            });
         }
 
         function initSocket() {
@@ -316,214 +360,299 @@
             socket = io(SERVER_URL);
 
             socket.on('registered', (data) => {
-                myId = data.hardwareId;
-                myType = data.type;
-
-                // 유저 정보 저장
-                localStorage.setItem('sc_user', JSON.stringify({ id: myId, type: myType }));
-
+                myId = data.uuid;
+                localStorage.setItem('sc_user_uuid', myId);
                 showZone('chat-zone');
-                document.getElementById('status-text').innerText = `나의 ID: ${myId} (${myType})`;
-                if (myType === 'slave') {
-                    document.getElementById('codeBtn').style.display = 'none';
-                }
-
-                // 등록 후 읽지 않은 메시지 수 조회
-                setTimeout(() => refreshUnreadCounts(), 500);
+                document.getElementById('status-text').innerText = `나의 ID: ${myId.substring(0, 8)}... (Master)`;
             });
 
-            socket.on('sync_code', (data) => {
-                document.getElementById('sync-area').style.display = 'block';
-                document.getElementById('display-code').innerText = data.code;
-            });
+            socket.on('relay_push', async (data) => {
+                const decryptedText = await decryptPayload(data.payload);
 
-            socket.on('push', (data) => {
-                if (data.type === 'read_receipt') {
-                    // 읽음 확인 메시지
-                    addReadReceipt(data.fromId);
-                    return;
-                }
+                // Send ACK immediately back to sender
+                socket.emit('msg_ack', { to: data.from, msgId: data.msgId });
 
-                const type = data.type === 'sent' ? 'sent' : 'received';
-                const displaySender = type === 'sent' ? '나' : data.from;
-                const unreadCount = data.unreadCount || 0;
-
-                addMessage(displaySender, data.text, type, unreadCount, true);
-
-                // 받은 메시지인 경우 읽지 않은 메시지 수 업데이트
-                if (type === 'received') {
-                    unreadCounts[data.from] = unreadCount;
-                    updateUnreadCounterUI();
+                if (decryptedText) {
+                    const msg = {
+                        msgId: data.msgId,
+                        from: data.from,
+                        to: data.to,
+                        timestamp: data.timestamp,
+                        text: decryptedText,
+                        type: 'received',
+                        status: 'received'
+                    };
+                    await db.messages.add(msg);
+                    addMessageUI(msg.from.substring(0, 8) + '...', msg.text, 'received', msg.msgId);
+                } else {
+                    addMessageUI(data.from.substring(0, 8) + '...', "[🔒 암호화된 메시지 - Key가 맞지 않음]", 'received', data.msgId);
                 }
             });
 
-            socket.on('unread_counts', (counts) => {
-                unreadCounts = counts;
-                updateUnreadCounterUI();
+            socket.on('queue_flush', async (messages) => {
+                for (const data of messages) {
+                    const decryptedText = await decryptPayload(data.payload);
+
+                    // Send ACK for queued messages too
+                    socket.emit('msg_ack', { to: data.from, msgId: data.msgId });
+
+                    if (decryptedText) {
+                        const msg = {
+                            msgId: data.msgId,
+                            from: data.from,
+                            to: data.to,
+                            timestamp: data.timestamp,
+                            text: decryptedText,
+                            type: 'received',
+                            status: 'received'
+                        };
+                        await db.messages.add(msg);
+                        addMessageUI(msg.from.substring(0, 8) + '...', msg.text, 'received', msg.msgId);
+                    } else {
+                        addMessageUI(data.from.substring(0, 8) + '...', "[🔒 암호화된 메시지 (Queue)]", 'received', data.msgId);
+                    }
+                }
+            });
+
+            // Handle incoming ACKs for messages WE sent
+            socket.on('msg_ack_push', async (data) => {
+                console.log(`✅ [ACK] Received for ${data.msgId}`);
+                await db.messages.where('msgId').equals(data.msgId).modify({ status: 'delivered' });
+
+                // Update UI status badge
+                const statusEl = document.getElementById(`status-${data.msgId}`);
+                if (statusEl) {
+                    statusEl.innerText = "✓ 읽음(도달)";
+                    statusEl.style.color = "#10b981";
+                }
+            });
+
+            socket.on('dispatch_status', async (data) => {
+                console.log(`📡 [Dispatch] ${data.status} for ${data.msgId}`);
+                if (data.status === 'queued') {
+                    const statusEl = document.getElementById(`status-${data.msgId}`);
+                    if (statusEl) statusEl.innerText = "⏳ 대기중(오프라인)";
+                }
             });
 
             socket.on('error_msg', (data) => alert(data.message));
         }
 
-        function registerMaster() {
-            const id = document.getElementById('hwId').value;
-            if (!id) return;
-            initSocket();
-            socket.emit('register_master', id);
+        // 3. Key Hierarchy & Argon2
+        async function registerMaster(isNew = true) {
+            const username = document.getElementById('hwId').value;
+            const secret = document.getElementById('hwSecret').value;
+            if (!username || !secret) return alert("ID와 Passphrase를 입력하세요.");
+
+            const salt = isNew ? crypto.randomUUID() : window.lastSalt;
+            const params = isNew ? { time: 2, mem: 16384, hashLen: 64 } : window.lastParams;
+
+            const status = document.getElementById('reg-status');
+            status.innerText = "⏳ Key Generating (Argon2)...";
+
+            try {
+                const result = await argon2.hash({
+                    pass: secret,
+                    salt: salt,
+                    time: params.time,
+                    mem: params.mem,
+                    hashLen: params.hashLen,
+                    type: argon2.ArgonType.Argon2id
+                });
+
+                // Split 64-byte hash: [32-byte UUID] [32-byte Encryption Key]
+                const hashBytes = result.hash;
+                const uuidPart = hashBytes.slice(0, 32);
+                const keyPart = hashBytes.slice(32, 64);
+
+                myId = Array.from(uuidPart).map(b => b.toString(16).padStart(2, '0')).join('');
+
+                // Import Key for WebCrypto
+                myKey = await crypto.subtle.importKey(
+                    "raw", keyPart, "AES-GCM", false, ["encrypt", "decrypt"]
+                );
+
+                // Save Key to Session (Memory only for security)
+                window.sessionKey = myKey;
+
+                initSocket();
+                socket.emit('register_master', {
+                    uuid: myId,
+                    username: isNew ? username : undefined,
+                    salt: salt,
+                    kdfParams: params
+                });
+            } catch (e) {
+                console.error(e);
+                status.innerText = "❌ 실패";
+            }
         }
 
-        function requestCode() {
-            socket.emit('request_sync_code');
+        // Helper: Get Encryption Key (Chat Secret or Session Key)
+        async function getActiveKey() {
+            const chatSecret = document.getElementById('chatSecret').value;
+            if (chatSecret) {
+                // Generate a temporary key from the Chat Secret
+                const encoder = new TextEncoder();
+                const keyData = await crypto.subtle.digest("SHA-256", encoder.encode(chatSecret));
+                return await crypto.subtle.importKey(
+                    "raw", keyData, "AES-GCM", false, ["encrypt", "decrypt"]
+                );
+            }
+            return window.sessionKey;
         }
 
-        function linkPc() {
-            const code = document.getElementById('syncCode').value;
-            if (!code) return;
-            initSocket();
-            socket.emit('link_pc', code.toUpperCase());
+        // 4. Encryption & Binary Serialization
+        async function encryptPayload(text) {
+            const encryptionKey = await getActiveKey();
+            if (!encryptionKey) return null;
+
+            const encoder = new TextEncoder();
+            const data = encoder.encode(text);
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+
+            const ciphertext = await crypto.subtle.encrypt(
+                { name: "AES-GCM", iv: iv },
+                encryptionKey,
+                data
+            );
+
+            const packet = new Uint8Array(1 + 12 + ciphertext.byteLength);
+            packet[0] = 0x01; // Version 1
+            packet.set(iv, 1);
+            packet.set(new Uint8Array(ciphertext), 13);
+            return packet;
         }
 
-        function sendMessage() {
+        async function decryptPayload(data) {
+            const decryptionKey = await getActiveKey();
+            if (!decryptionKey) return null;
+
+            try {
+                const packet = new Uint8Array(data);
+                const version = packet[0];
+                const iv = packet.slice(1, 13);
+                const ciphertext = packet.slice(13);
+
+                const decrypted = await crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv: iv },
+                    decryptionKey,
+                    ciphertext
+                );
+                return new TextDecoder().decode(decrypted);
+            } catch (e) {
+                console.warn("Decryption failed - possibly wrong key", e);
+                return null; // Return null to show fallback or error
+            }
+        }
+
+        async function sendMessage() {
             const targetId = document.getElementById('targetId').value;
             const text = document.getElementById('chatInput').value;
+            if (!text || !targetId) return;
 
-            if (!text) return;
+            const msgId = crypto.randomUUID();
+            const binaryPayload = await encryptPayload(text);
+            socket.emit('relay', {
+                msgId: msgId,
+                to: targetId,
+                payload: binaryPayload
+            });
 
-            if (!targetId) {
-                socket.emit('message_relay', { text });
-            } else {
-                socket.emit('direct_message', { toId: targetId, text });
-                currentChatWith = targetId;
-            }
-
+            const msg = {
+                msgId: msgId,
+                from: myId,
+                to: targetId,
+                timestamp: Date.now(),
+                text,
+                type: 'sent',
+                status: 'pending'
+            };
+            await db.messages.add(msg);
+            addMessageUI('나', text, 'sent', msgId);
             document.getElementById('chatInput').value = '';
         }
 
-        function addMessage(sender, text, type, unreadCount = 0, save = false) {
+        function addMessageUI(sender, text, type, msgId = null) {
             const msgArea = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = `msg ${type}`;
 
-            const info = document.createElement('div');
-            info.className = 'msg-info';
-
-            const senderSpan = document.createElement('span');
-            senderSpan.innerText = sender;
-            info.appendChild(senderSpan);
-
-            // 읽지 않은 메시지 수 표시 (받은 메시지만)
-            if (type === 'received' && unreadCount > 0) {
-                const badge = document.createElement('span');
-                badge.className = 'unread-badge';
-                badge.innerText = unreadCount;
-                info.appendChild(badge);
+            let statusBadge = "";
+            if (type === 'sent' && msgId) {
+                statusBadge = `<span id="status-${msgId}" style="font-size: 0.6rem; margin-left:8px; color: #94a3b8;">⏳ 전송중</span>`;
             }
 
-            const content = document.createElement('div');
-            content.innerText = text;
-
-            div.appendChild(info);
-            div.appendChild(content);
-            msgArea.appendChild(div);
-            msgArea.scrollTop = msgArea.scrollHeight;
-
-            if (save) {
-                saveMessage(sender, text, type);
-            }
-        }
-
-        function addReadReceipt(fromId) {
-            const msgArea = document.getElementById('messages');
-            const div = document.createElement('div');
-            div.className = 'read-receipt';
-            div.innerText = `✓✓ ${fromId}님이 메시지를 읽었습니다`;
+            div.innerHTML = `
+                <div class="msg-info">
+                    <span>${sender}</span>
+                    ${statusBadge}
+                </div>
+                <div>${text}</div>
+            `;
             msgArea.appendChild(div);
             msgArea.scrollTop = msgArea.scrollHeight;
         }
 
-        function markAsRead(fromId) {
-            if (!socket) return;
-            socket.emit('mark_as_read', fromId);
-
-            // 로컬에서도 즉시 업데이트
-            delete unreadCounts[fromId];
-            updateUnreadCounterUI();
-
-            // 대화 상대 설정
-            document.getElementById('targetId').value = fromId;
-            currentChatWith = fromId;
-        }
-
-        function refreshUnreadCounts() {
-            if (!socket) return;
-            socket.emit('get_unread_counts');
-        }
-
-        function updateUnreadCounterUI() {
-            const counterDiv = document.getElementById('unread-counter');
-            const listDiv = document.getElementById('unread-list');
-
-            listDiv.innerHTML = '';
-
-            const hasUnread = Object.keys(unreadCounts).length > 0;
-
-            if (hasUnread) {
-                counterDiv.classList.add('active');
-
-                for (const [fromId, count] of Object.entries(unreadCounts)) {
-                    const item = document.createElement('div');
-                    item.className = 'unread-item';
-                    item.onclick = () => markAsRead(fromId);
-
-                    const name = document.createElement('span');
-                    name.className = 'name';
-                    name.innerText = fromId;
-
-                    const countBadge = document.createElement('span');
-                    countBadge.className = 'count';
-                    countBadge.innerText = count;
-
-                    item.appendChild(name);
-                    item.appendChild(countBadge);
-                    listDiv.appendChild(item);
-                }
-            } else {
-                counterDiv.classList.remove('active');
-            }
-        }
-
-        function saveMessage(sender, text, type) {
-            const history = JSON.parse(localStorage.getItem('sc_history') || '[]');
-            history.push({ sender, text, type, time: Date.now() });
-            // 최근 100개만 유지
-            if (history.length > 100) history.shift();
-            localStorage.setItem('sc_history', JSON.stringify(history));
-        }
-
-        function loadChatHistory() {
-            const history = JSON.parse(localStorage.getItem('sc_history') || '[]');
+        async function loadChatHistory() {
+            const history = await db.messages.orderBy('timestamp').limit(100).toArray();
             history.forEach(msg => {
-                addMessage(msg.sender, msg.text, msg.type, 0, false);
+                const sender = msg.from === myId ? '나' : msg.from.substring(0, 8) + '...';
+                const div = addMessageUI(sender, msg.text, msg.type, msg.msgId);
+
+                // Update status badge if it's already delivered
+                if (msg.type === 'sent' && msg.status === 'delivered') {
+                    const statusEl = document.getElementById(`status-${msg.msgId}`);
+                    if (statusEl) {
+                        statusEl.innerText = "✓ 읽음(도달)";
+                        statusEl.style.color = "#10b981";
+                    }
+                }
             });
+        }
+
+        function showZone(id) {
+            document.querySelectorAll('.zone').forEach(z => z.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
         }
 
         function clearLocalData() {
             if (confirm('모든 로컬 데이터(ID, 채팅 내역)를 초기화할까요?')) {
-                localStorage.clear();
-                location.reload();
+                db.delete().then(() => {
+                    localStorage.clear();
+                    location.reload();
+                });
             }
+        }
+
+        function findUserByUsername() {
+            const username = document.getElementById('findUsername').value;
+            if (!username) return;
+            initSocket();
+            socket.emit('get_salt', username);
+
+            // Temporary one-time listener for discovery
+            socket.once('salt_found', (data) => {
+                document.getElementById('targetId').value = data.uuid;
+                alert(`유저를 찾았습니다: ${username}\nID가 자동으로 입력되었습니다.`);
+            });
+            socket.once('salt_not_found', () => alert("해당 유저를 찾을 수 없습니다."));
+        }
+
+        function copyMyId() {
+            if (!myId) return;
+            navigator.clipboard.writeText(myId);
+            alert("나의 고유 ID(UUID)가 복사되었습니다.");
+        }
+
+        function refreshUnreadCounts() {
+            // Unread counts are handled locally or via server later
+            console.log("Refresh unread counts - logic to be updated");
         }
 
         document.getElementById('chatInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendMessage();
         });
-
-        // 주기적으로 읽지 않은 메시지 수 업데이트 (30초마다)
-        setInterval(() => {
-            if (socket && myId) {
-                refreshUnreadCounts();
-            }
-        }, 30000);
     </script>
 
 </body>
