@@ -8,6 +8,7 @@ import { Social } from './lib/social.js';
 import type { RelayPayload, RegisterMasterEvent } from './types/protocol.js';
 import { createAdapter } from '@socket.io/redis-adapter';
 import redis from './lib/redis.js';
+import { initDb } from './lib/db.js';
 
 const app = express();
 app.use(cors());
@@ -212,6 +213,9 @@ const startServer = async () => {
         // Check Redis connection
         await redis.ping();
         console.log('✅ [Redis] Connected');
+
+        // Init DB Schema
+        await initDb();
 
         server.listen(PORT, () => {
             console.log(`🚀 [Transparent Pipeline] Running on port ${PORT}`);
