@@ -1,12 +1,17 @@
 import { Redis } from 'ioredis';
 
+const isDefault = !process.env.REDIS_URL && !process.env.REDIS_PRIVATE_URL && !process.env.REDISHOST;
 const redisUrl = process.env.REDIS_URL ||
     process.env.REDIS_PRIVATE_URL ||
     (process.env.REDISHOST ? `redis://:${process.env.REDISPASSWORD}@${process.env.REDISHOST}:${process.env.REDISPORT}` : 'redis://localhost:6379');
 
 // Mask password in connection log
 const maskedUrl = redisUrl.replace(/:[^:@]+@/, ':****@');
-console.log(`📡 [Redis] Attempting to connect to: ${maskedUrl}`);
+console.log(`📡 [Redis] Connecting to: ${maskedUrl} ${isDefault ? '⚠️ (FALLBACK TO LOCALHOST)' : '✅ (REMOTE)'}`);
+
+if (isDefault && process.env.NODE_ENV === 'production') {
+    console.error('❌ [CRITICAL] REDIS_URL is missing in PRODUCTION environment!');
+}
 
 const isTls = redisUrl.startsWith('rediss://');
 

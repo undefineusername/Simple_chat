@@ -12,6 +12,13 @@ import redis from './lib/redis.js';
 const app = express();
 app.use(cors());
 
+// Diagnostic: Check environment variables
+console.log('🧐 [Diagnostic] Checking Environment Variables:');
+console.log(' - REDIS_URL:', process.env.REDIS_URL ? '✅ Found' : '❌ Missing');
+console.log(' - REDISHOST:', process.env.REDISHOST ? '✅ Found' : '❌ Missing');
+console.log(' - DATABASE_URL:', process.env.DATABASE_URL ? '✅ Found' : '❌ Missing');
+console.log(' - PORT:', process.env.PORT || '3000 (default)');
+
 // Health Check
 app.get('/ping', (req, res) => res.send('pong'));
 
