@@ -179,7 +179,7 @@ io.on('connection', (socket) => {
   });
 
   // ④ 투명한 파이프라인 + 오프라인 큐잉
-  socket.on('raw_relay', ({ toId, data }) => {
+  socket.on('raw_relay', ({ toId, data, msgId }) => {
     const fromId = socketToId.get(socket.id);
     if (!fromId || !toId || data === undefined) return;
 
@@ -188,7 +188,7 @@ io.on('connection', (socket) => {
       (typeof data === 'string' ? Buffer.byteLength(data) : JSON.stringify(data).length);
     if (payloadSize > MAX_PAYLOAD_SIZE) return socket.emit('error_msg', { message: "Data too large" });
 
-    const relayPayload = { from: fromId, to: toId, payload: data, timestamp: Date.now() };
+    const relayPayload = { from: fromId, to: toId, payload: data, msgId, timestamp: Date.now() };
 
     // 1. 실시간 전달 시도
     const delivered = relayToGroup(toId, 'raw_push', relayPayload);
@@ -203,6 +203,15 @@ io.on('connection', (socket) => {
 
     // 3. 내 다른 기기로 동기화 (Echo)
     relayToGroup(fromId, 'raw_push', { ...relayPayload, type: 'echo' }, socket.id);
+  });
+
+  // ⑤ 읽음 확인 (ACK Read)
+  socket.on('ack_read', ({ toId, msgId }) => {
+    const fromId = socketToId.get(socket.id);
+    if (!fromId || !toId) return;
+
+    // 송신자의 모든 기기(Echo 포함)에 'read' 상태 전파
+    relayToGroup(toId, 'read_receipt', { from: fromId, msgId, timestamp: Date.now() });
   });
 
   // Legacy Compatibility (test.html 지원용)
