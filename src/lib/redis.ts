@@ -1,11 +1,24 @@
 import { Redis } from 'ioredis';
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-    maxRetriesPerRequest: null
-});
+const redisUrl = process.env.REDIS_URL ||
+    (process.env.REDISHOST ? `redis://:${process.env.REDISPASSWORD}@${process.env.REDISHOST}:${process.env.REDISPORT}` : 'redis://localhost:6379');
 
-redis.on('error', (err: Error) => {
-    console.error('🔴 [Redis] Error:', err.message);
+const isTls = redisUrl.startsWith('rediss://');
+
+const redisOptions: any = {
+    maxRetriesPerRequest: null,
+    connectTimeout: 10000, // 10s timeout
+};
+
+if (isTls) {
+    redisOptions.tls = { rejectUnauthorized: false };
+}
+
+const redis = new Redis(redisUrl, redisOptions);
+
+redis.on('error', (err: any) => {
+    console.error('🔴 [Redis] Error:', err.message || err);
+    if (err.stack) console.error(err.stack);
 });
 
 
