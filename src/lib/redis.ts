@@ -1,7 +1,12 @@
 import { Redis } from 'ioredis';
 
 const redisUrl = process.env.REDIS_URL ||
+    process.env.REDIS_PRIVATE_URL ||
     (process.env.REDISHOST ? `redis://:${process.env.REDISPASSWORD}@${process.env.REDISHOST}:${process.env.REDISPORT}` : 'redis://localhost:6379');
+
+// Mask password in connection log
+const maskedUrl = redisUrl.replace(/:[^:@]+@/, ':****@');
+console.log(`📡 [Redis] Attempting to connect to: ${maskedUrl}`);
 
 const isTls = redisUrl.startsWith('rediss://');
 
