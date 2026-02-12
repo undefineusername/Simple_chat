@@ -13,33 +13,36 @@ const pool = new Pool({
 
 // Auto-initialize schema
 export const initDb = async () => {
-    const schema = `
-        CREATE TABLE IF NOT EXISTS accounts (
+    console.log('🚀 [Postgres] Initializing schema...');
+    const tables = [
+        `CREATE TABLE IF NOT EXISTS accounts (
             account_uuid VARCHAR(255) PRIMARY KEY,
             username VARCHAR(255) UNIQUE NOT NULL,
             account_salt VARCHAR(255) NOT NULL,
             kdf_params JSONB NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS friends (
+        )`,
+        `CREATE TABLE IF NOT EXISTS friends (
             id SERIAL PRIMARY KEY,
             user_uuid VARCHAR(255) REFERENCES accounts(account_uuid),
             friend_uuid VARCHAR(255) REFERENCES accounts(account_uuid),
             status VARCHAR(50) DEFAULT 'accepted',
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_uuid, friend_uuid)
-        );
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_friends_user ON friends(user_uuid)`,
+        `CREATE INDEX IF NOT EXISTS idx_friends_friend ON friends(friend_uuid)`
+    ];
 
-        CREATE INDEX IF NOT EXISTS idx_friends_user ON friends(user_uuid);
-        CREATE INDEX IF NOT EXISTS idx_friends_friend ON friends(friend_uuid);
-    `;
-    try {
-        await pool.query(schema);
-        console.log('✅ [Postgres] Schema initialized');
-    } catch (err) {
-        console.error('❌ [Postgres] Schema init error:', err);
+    for (const sql of tables) {
+        try {
+            await pool.query(sql);
+        } catch (err) {
+            console.error('❌ [Postgres] Schema init error on query:', sql, err);
+            throw err;
+        }
     }
+    console.log('✅ [Postgres] Schema initialized successfully');
 };
 
 export default pool;

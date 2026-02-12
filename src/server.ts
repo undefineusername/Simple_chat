@@ -83,14 +83,19 @@ io.on('connection', (socket: Socket) => {
     // Discovery: Fetch Salt for a username
     socket.on('get_salt', async (username: string) => {
         if (!username) return;
-        const account = await Auth.getSaltByUsername(username);
-        if (account) {
-            socket.emit('salt_found', {
-                uuid: account.account_uuid,
-                salt: account.account_salt,
-                kdfParams: account.kdf_params
-            });
-        } else {
+        try {
+            const account = await Auth.getSaltByUsername(username);
+            if (account) {
+                socket.emit('salt_found', {
+                    uuid: account.account_uuid,
+                    salt: account.account_salt,
+                    kdfParams: account.kdf_params
+                });
+            } else {
+                socket.emit('salt_not_found');
+            }
+        } catch (err) {
+            console.error('❌ [Auth] Error in get_salt:', err);
             socket.emit('salt_not_found');
         }
     });
