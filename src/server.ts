@@ -100,6 +100,75 @@ io.on('connection', (socket: Socket) => {
         }
     });
 
+    // Invite Code System
+    socket.on('create_invite_code', async () => {
+        const uuid = socketToUuid.get(socket.id);
+        if (!uuid) return socket.emit('error_msg', { message: 'Unauthorized' });
+
+        try {
+            // Generate 6-char Alphanumeric Code
+            const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+            // Get public key if available (Optional, mainly just need UUID to find friend)
+            // But having public key directly speeds up 'add friend'
+            // We can retrieve it from DB or Auth if needed, or rely on client sending it?
+            // Client didn't send it in this event. 
+            // We can fetch user details from Auth/DB
+            const account = await Auth.getAccount(uuid);
+            // We need a helper to get public key if stored? 
+            // Currently Auth.getSaltByUsername returns minimal info.
+            // Let's just store UUID and Username for now, client can fetch Salt/Key via get_salt logic later if needed
+            // OR we can make 'resolve_invite_code' equivalent to 'salt_found'
+
+            // Store in Redis (24h TTL)
+            await redis.set(`invite:${code}`, JSON.stringify({
+                uuid,
+                username: account?.username || 'Unknown'
+            }), 'EX', 86400);
+
+            socket.emit('invite_code_created', { code, expiresAt: Date.now() + 86400000 });
+            console.log(`🎟️ [Invite] Created code ${code} for ${uuid}`);
+        } catch (e) {
+            console.error('Failed to create invite code', e);
+        }
+    });
+
+    socket.on('resolve_invite_code', async (code: string) => {
+        if (!code) return;
+        try {
+            const dataStr = await redis.get(`invite:${code.toUpperCase()}`);
+            if (dataStr) {
+                const data = JSON.parse(dataStr);
+                // We typically need salt/params for the full 'add friend' flow if we want to do it properly?
+                // Or we just return UUID and client calls get_salt? 
+                // Let's return UUID and Username. Client can then use UUID or Username to proceed.
+                // Actually, to add friend securely, we might need their public key if we want to skip handshake?
+                // For now, let's just return what we stored.
+
+                // Better: Return the same data as 'salt_found' if possible?
+                // Let's look up the account again to be sure we have latest params.
+                const account = await Auth.getAccount(data.uuid);
+
+                if (account) {
+                    socket.emit('invite_code_resolved', {
+                        uuid: account.account_uuid,
+                        username: account.username,
+                        salt: account.account_salt,
+                        kdfParams: account.kdf_params
+                    });
+                } else {
+                    socket.emit('invite_code_error', { message: 'User not found' });
+                }
+            } else {
+                socket.emit('invite_code_error', { message: 'Invalid or expired code' });
+            }
+        } catch (e) {
+            console.error('Error resolving invite code', e);
+            socket.emit('invite_code_error', { message: 'Server error' });
+        }
+    });
+
+
     // Register Master (Login/Connect/Signup)
     socket.on('register_master', async (event: RegisterMasterEvent) => {
         const { uuid, username, salt, kdfParams } = event;
