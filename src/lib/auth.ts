@@ -2,7 +2,16 @@ import argon2 from 'argon2';
 import pool from './db.js';
 
 export const Auth = {
-    async register(uuid: string, username: string, salt: string, kdfParams: any): Promise<{ success: boolean; reason?: 'USERNAME_TAKEN' | 'DB_ERROR' }> {
+    async updatePublicKey(uuid: string, publicKey: any) {
+        const query = 'UPDATE accounts SET dh_public_key = $2 WHERE account_uuid = $1';
+        try {
+            await pool.query(query, [uuid, publicKey]);
+        } catch (e) {
+            console.error("Failed to update public key", e);
+        }
+    },
+
+    async register(uuid: string, username: string, salt: string, kdfParams: any, publicKey?: any): Promise<{ success: boolean; reason?: 'USERNAME_TAKEN' | 'DB_ERROR' }> {
         // Check if username already taken by a different UUID
         const checkQuery = 'SELECT account_uuid FROM accounts WHERE username = $1';
         const checkRes = await pool.query(checkQuery, [username]);
@@ -12,13 +21,14 @@ export const Auth = {
         }
 
         const query = `
-      INSERT INTO accounts (account_uuid, username, account_salt, kdf_params)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (account_uuid) DO NOTHING
+      INSERT INTO accounts (account_uuid, username, account_salt, kdf_params, dh_public_key)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (account_uuid) DO UPDATE
+      SET dh_public_key = EXCLUDED.dh_public_key
       RETURNING *;
     `;
         try {
-            await pool.query(query, [uuid, username, salt, kdfParams]);
+            await pool.query(query, [uuid, username, salt, kdfParams, publicKey]);
             return { success: true };
         } catch (e) {
             console.error("DB Register Error", e);
@@ -27,7 +37,7 @@ export const Auth = {
     },
 
     async getSaltByUsername(username: string) {
-        const query = 'SELECT account_uuid, account_salt, kdf_params FROM accounts WHERE username = $1';
+        const query = 'SELECT account_uuid, account_salt, kdf_params, dh_public_key FROM accounts WHERE username = $1';
         const res = await pool.query(query, [username]);
         return res.rows[0];
     },

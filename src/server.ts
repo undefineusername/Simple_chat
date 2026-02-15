@@ -89,7 +89,8 @@ io.on('connection', (socket: Socket) => {
                 socket.emit('salt_found', {
                     uuid: account.account_uuid,
                     salt: account.account_salt,
-                    kdfParams: account.kdf_params
+                    kdfParams: account.kdf_params,
+                    publicKey: account.dh_public_key // Send Public Key
                 });
             } else {
                 socket.emit('salt_not_found');
@@ -170,18 +171,21 @@ io.on('connection', (socket: Socket) => {
 
 
     // Register Master (Login/Connect/Signup)
-    socket.on('register_master', async (event: RegisterMasterEvent) => {
-        const { uuid, username, salt, kdfParams } = event;
+    socket.on('register_master', async (event: RegisterMasterEvent & { publicKey?: any }) => {
+        const { uuid, username, salt, kdfParams, publicKey } = event;
 
         // Auto-Signup if details provided
         if (username && salt && kdfParams) {
-            const result = await Auth.register(uuid, username, salt, kdfParams);
+            const result = await Auth.register(uuid, username, salt, kdfParams, publicKey);
             if (!result.success) {
                 if (result.reason === 'USERNAME_TAKEN') {
                     return socket.emit('error_msg', { message: 'Username already taken. Please choose another one.' });
                 }
                 return socket.emit('error_msg', { message: 'Registration failed due to server error.' });
             }
+        } else if (uuid && publicKey) {
+            // Update Public Key for existing users connecting without full registration details
+            await Auth.updatePublicKey(uuid, publicKey);
         }
 
         if (!uuid || !(await Auth.exists(uuid))) {
