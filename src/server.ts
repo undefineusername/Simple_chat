@@ -175,7 +175,13 @@ io.on('connection', (socket: Socket) => {
 
         // Auto-Signup if details provided
         if (username && salt && kdfParams) {
-            await Auth.register(uuid, username, salt, kdfParams);
+            const result = await Auth.register(uuid, username, salt, kdfParams);
+            if (!result.success) {
+                if (result.reason === 'USERNAME_TAKEN') {
+                    return socket.emit('error_msg', { message: 'Username already taken. Please choose another one.' });
+                }
+                return socket.emit('error_msg', { message: 'Registration failed due to server error.' });
+            }
         }
 
         if (!uuid || !(await Auth.exists(uuid))) {

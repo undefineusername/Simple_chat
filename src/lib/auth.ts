@@ -2,13 +2,13 @@ import argon2 from 'argon2';
 import pool from './db.js';
 
 export const Auth = {
-    async register(uuid: string, username: string, salt: string, kdfParams: any) {
+    async register(uuid: string, username: string, salt: string, kdfParams: any): Promise<{ success: boolean; reason?: 'USERNAME_TAKEN' | 'DB_ERROR' }> {
         // Check if username already taken by a different UUID
         const checkQuery = 'SELECT account_uuid FROM accounts WHERE username = $1';
         const checkRes = await pool.query(checkQuery, [username]);
         if (checkRes.rowCount && checkRes.rows[0].account_uuid !== uuid) {
             console.warn(`⚠️ [Auth] Username ${username} already taken.`);
-            return null;
+            return { success: false, reason: 'USERNAME_TAKEN' };
         }
 
         const query = `
@@ -17,8 +17,13 @@ export const Auth = {
       ON CONFLICT (account_uuid) DO NOTHING
       RETURNING *;
     `;
-        const res = await pool.query(query, [uuid, username, salt, kdfParams]);
-        return res.rows[0];
+        try {
+            await pool.query(query, [uuid, username, salt, kdfParams]);
+            return { success: true };
+        } catch (e) {
+            console.error("DB Register Error", e);
+            return { success: false, reason: 'DB_ERROR' };
+        }
     },
 
     async getSaltByUsername(username: string) {
