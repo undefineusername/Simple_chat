@@ -124,7 +124,8 @@ io.on('connection', (socket: Socket) => {
             // Store in Redis (24h TTL)
             await redis.set(`invite:${code}`, JSON.stringify({
                 uuid,
-                username: account?.username || 'Unknown'
+                username: account?.username || 'Unknown',
+                publicKey: account?.dh_public_key
             }), 'EX', 86400);
 
             socket.emit('invite_code_created', { code, expiresAt: Date.now() + 86400000 });
@@ -155,7 +156,8 @@ io.on('connection', (socket: Socket) => {
                         uuid: account.account_uuid,
                         username: account.username,
                         salt: account.account_salt,
-                        kdfParams: account.kdf_params
+                        kdfParams: account.kdf_params,
+                        publicKey: account.dh_public_key
                     });
                 } else {
                     socket.emit('invite_code_error', { message: 'User not found' });
