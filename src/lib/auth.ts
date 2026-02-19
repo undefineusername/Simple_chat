@@ -12,23 +12,30 @@ export const Auth = {
     },
 
     async register(uuid: string, username: string, salt: string, kdfParams: any, publicKey?: any): Promise<{ success: boolean; reason?: 'USERNAME_TAKEN' | 'DB_ERROR' }> {
+        const normalizedUsername = username.toLowerCase();
+
         // Check if username already taken by a different UUID
         const checkQuery = 'SELECT account_uuid FROM accounts WHERE username = $1';
-        const checkRes = await pool.query(checkQuery, [username]);
+        const checkRes = await pool.query(checkQuery, [normalizedUsername]);
+
         if (checkRes.rowCount && checkRes.rows[0].account_uuid !== uuid) {
-            console.warn(`⚠️ [Auth] Username ${username} already taken.`);
+            console.warn(`⚠️ [Auth] Username ${normalizedUsername} already taken.`);
             return { success: false, reason: 'USERNAME_TAKEN' };
         }
 
+        // Upsert Account
         const query = `
       INSERT INTO accounts (account_uuid, username, account_salt, kdf_params, dh_public_key)
       VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (account_uuid) DO UPDATE
-      SET dh_public_key = EXCLUDED.dh_public_key
+      SET dh_public_key = EXCLUDED.dh_public_key,
+          username = EXCLUDED.username,
+          account_salt = EXCLUDED.account_salt,
+          kdf_params = EXCLUDED.kdf_params
       RETURNING *;
     `;
         try {
-            await pool.query(query, [uuid, username, salt, kdfParams, publicKey]);
+            await pool.query(query, [uuid, normalizedUsername, salt, kdfParams, publicKey]);
             return { success: true };
         } catch (e) {
             console.error("DB Register Error", e);
@@ -37,8 +44,9 @@ export const Auth = {
     },
 
     async getSaltByUsername(username: string) {
+        const normalizedUsername = username.toLowerCase();
         const query = 'SELECT account_uuid, account_salt, kdf_params, dh_public_key FROM accounts WHERE username = $1';
-        const res = await pool.query(query, [username]);
+        const res = await pool.query(query, [normalizedUsername]);
         return res.rows[0];
     },
 

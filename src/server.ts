@@ -263,6 +263,12 @@ io.on('connection', (socket: Socket) => {
         }
     });
 
+    socket.on('get_presence', async (targetUuid: string) => {
+        if (!targetUuid) return;
+        const online = await PresenceStore.isOnline(targetUuid);
+        socket.emit('presence_update', { uuid: targetUuid, status: online ? 'online' : 'offline' });
+    });
+
     socket.on('report_user', async ({ targetUuid, reason }: { targetUuid: string, reason: string }) => {
         const uuid = socketToUuid.get(socket.id);
         if (uuid) {
