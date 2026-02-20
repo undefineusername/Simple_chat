@@ -75,4 +75,33 @@ export const MessageQueue = {
     }
 };
 
+export const CallStore = {
+    async joinCall(groupId: string, uuid: string) {
+        const key = `call:${groupId}:participants`;
+        await redis.sadd(key, uuid);
+        await redis.expire(key, 3600); // 1 hour TTL for safety
+    },
+
+    async leaveCall(groupId: string, uuid: string) {
+        const key = `call:${groupId}:participants`;
+        await redis.srem(key, uuid);
+        // If no more participants, the key will eventually expire
+    },
+
+    async getParticipants(groupId: string): Promise<string[]> {
+        const key = `call:${groupId}:participants`;
+        return await redis.smembers(key);
+    },
+
+    async clearUserFromAllCalls(uuid: string) {
+        // This is a bit expensive if there are many active calls,
+        // but for this scale it's fine.
+        // A better way would be to track which calls a user is in.
+        const keys = await redis.keys('call:*:participants');
+        for (const key of keys) {
+            await redis.srem(key, uuid);
+        }
+    }
+};
+
 export default redis;

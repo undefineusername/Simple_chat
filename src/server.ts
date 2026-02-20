@@ -2,7 +2,7 @@ import http from 'http';
 import express from 'express';
 import { Server, Socket } from 'socket.io';
 import cors from 'cors';
-import { PresenceStore, MessageQueue } from './lib/redis.js';
+import { PresenceStore, MessageQueue, CallStore } from './lib/redis.js';
 import { Auth } from './lib/auth.js';
 import { Social } from './lib/social.js';
 import type { RelayPayload, RegisterMasterEvent } from './types/protocol.js';
@@ -268,7 +268,12 @@ io.on('connection', (socket: Socket) => {
     socket.on('get_presence', async (targetUuid: string) => {
         if (!targetUuid) return;
         const online = await PresenceStore.isOnline(targetUuid);
-        socket.emit('presence_update', { uuid: targetUuid, status: online ? 'online' : 'offline' });
+        const account = await Auth.getAccount(targetUuid);
+        socket.emit('presence_update', {
+            uuid: targetUuid,
+            status: online ? 'online' : 'offline',
+            publicKey: account?.dh_public_key
+        });
     });
 
     socket.on('report_user', async ({ targetUuid, reason }: { targetUuid: string, reason: string }) => {
@@ -279,10 +284,47 @@ io.on('connection', (socket: Socket) => {
         }
     });
 
+    // --- Group Call Signaling ---
+    socket.on('join_call', async ({ groupId }: { groupId: string }) => {
+        const uuid = socketToUuid.get(socket.id);
+        if (!uuid || !groupId) return;
+
+        console.log(`📞 [Call] ${uuid} joining call in ${groupId}`);
+        await CallStore.joinCall(groupId, uuid);
+
+        // Notify others in the group (we don't have a 'room' for groups yet, so we broadcast or rely on client relay)
+        // For Mesh, everyone needs to know a new peer joined to establish connection.
+        // We broadcast to all users? No, only those who are interested.
+        // For simplicity, we can emit a 'presence_update' style event or a specific 'call_participant_joined'.
+        // Let's use 'call_participant_joined' but who to send to?
+        // Since we don't track who is 'in' a group chat room on the server (it's stateless relay),
+        // we can't easily filter. 
+        // OPTION: Client broadcasts 'I joined' via 'relay' to all group members.
+        // But the server can help by telling the joiner who is already there.
+
+        const participants = await CallStore.getParticipants(groupId);
+        socket.emit('call_participants_list', { groupId, participants });
+    });
+
+    socket.on('leave_call', async ({ groupId }: { groupId: string }) => {
+        const uuid = socketToUuid.get(socket.id);
+        if (!uuid || !groupId) return;
+
+        console.log(`📞 [Call] ${uuid} leaving call in ${groupId}`);
+        await CallStore.leaveCall(groupId, uuid);
+    });
+
+    socket.on('get_call_participants', async ({ groupId }: { groupId: string }) => {
+        if (!groupId) return;
+        const participants = await CallStore.getParticipants(groupId);
+        socket.emit('call_participants_list', { groupId, participants });
+    });
+
     socket.on('disconnect', async () => {
         const uuid = socketToUuid.get(socket.id);
         if (uuid) {
             await PresenceStore.setOffline(uuid);
+            await CallStore.clearUserFromAllCalls(uuid);
             socketToUuid.delete(socket.id);
         }
         rateLimits.delete(socket.id);
