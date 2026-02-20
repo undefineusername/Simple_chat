@@ -93,14 +93,25 @@ export const CallStore = {
         return await redis.smembers(key);
     },
 
-    async clearUserFromAllCalls(uuid: string) {
+    async clearUserFromAllCalls(uuid: string): Promise<string[]> {
         // This is a bit expensive if there are many active calls,
         // but for this scale it's fine.
-        // A better way would be to track which calls a user is in.
+        // Returns the list of groupIds the user was removed from.
         const keys = await redis.keys('call:*:participants');
+        const removedGroups: string[] = [];
+
         for (const key of keys) {
-            await redis.srem(key, uuid);
+            const isMember = await redis.sismember(key, uuid);
+            if (isMember) {
+                await redis.srem(key, uuid);
+                // Extract groupId from key "call:{groupId}:participants"
+                const parts = key.split(':');
+                if (parts.length >= 3 && parts[1]) {
+                    removedGroups.push(parts[1]);
+                }
+            }
         }
+        return removedGroups;
     }
 };
 

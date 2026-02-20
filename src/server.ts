@@ -284,6 +284,20 @@ io.on('connection', (socket: Socket) => {
         }
     });
 
+    // --- WebRTC Signaling (Direct) ---
+    socket.on('signal', async (data: any) => {
+        const uuid = socketToUuid.get(socket.id);
+        if (!uuid || !data.to) return;
+
+        const targetSocketId = await PresenceStore.getSocketId(data.to);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('signal', {
+                ...data,
+                from: uuid
+            });
+        }
+    });
+
     // --- Group Call Signaling ---
     socket.on('join_call', async ({ groupId }: { groupId: string }) => {
         const uuid = socketToUuid.get(socket.id);
@@ -292,17 +306,20 @@ io.on('connection', (socket: Socket) => {
         console.log(`📞 [Call] ${uuid} joining call in ${groupId}`);
         await CallStore.joinCall(groupId, uuid);
 
-        // Notify others in the group (we don't have a 'room' for groups yet, so we broadcast or rely on client relay)
-        // For Mesh, everyone needs to know a new peer joined to establish connection.
-        // We broadcast to all users? No, only those who are interested.
-        // For simplicity, we can emit a 'presence_update' style event or a specific 'call_participant_joined'.
-        // Let's use 'call_participant_joined' but who to send to?
-        // Since we don't track who is 'in' a group chat room on the server (it's stateless relay),
-        // we can't easily filter. 
-        // OPTION: Client broadcasts 'I joined' via 'relay' to all group members.
-        // But the server can help by telling the joiner who is already there.
-
+        // Notify others in the group
         const participants = await CallStore.getParticipants(groupId);
+
+        // Broadcast to all participants (excluding self, effectively)
+        // Since we don't have rooms, we rely on the client to filter or we iterate if we knew socketIds
+        // Improved: Iterate participants and send specifically to them if online
+        for (const pUuid of participants) {
+            if (pUuid === uuid) continue;
+            const pSocketId = await PresenceStore.getSocketId(pUuid);
+            if (pSocketId) {
+                io.to(pSocketId).emit('call_user_joined', { groupId, uuid });
+            }
+        }
+
         socket.emit('call_participants_list', { groupId, participants });
     });
 
@@ -312,6 +329,14 @@ io.on('connection', (socket: Socket) => {
 
         console.log(`📞 [Call] ${uuid} leaving call in ${groupId}`);
         await CallStore.leaveCall(groupId, uuid);
+
+        const participants = await CallStore.getParticipants(groupId);
+        for (const pUuid of participants) {
+            const pSocketId = await PresenceStore.getSocketId(pUuid);
+            if (pSocketId) {
+                io.to(pSocketId).emit('call_user_left', { groupId, uuid });
+            }
+        }
     });
 
     socket.on('get_call_participants', async ({ groupId }: { groupId: string }) => {
@@ -324,7 +349,20 @@ io.on('connection', (socket: Socket) => {
         const uuid = socketToUuid.get(socket.id);
         if (uuid) {
             await PresenceStore.setOffline(uuid);
-            await CallStore.clearUserFromAllCalls(uuid);
+
+            // Smart Cleanup: Find which calls the user was in and notify others
+            const removedGroups = await CallStore.clearUserFromAllCalls(uuid);
+
+            for (const groupId of removedGroups) {
+                const participants = await CallStore.getParticipants(groupId);
+                for (const pUuid of participants) {
+                    const pSocketId = await PresenceStore.getSocketId(pUuid);
+                    if (pSocketId) {
+                        io.to(pSocketId).emit('call_user_left', { groupId, uuid });
+                    }
+                }
+            }
+
             socketToUuid.delete(socket.id);
         }
         rateLimits.delete(socket.id);
