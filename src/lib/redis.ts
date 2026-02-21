@@ -46,6 +46,7 @@ export const PresenceStore = {
     },
 
     async isOnline(uuid: string): Promise<boolean> {
+        if (!uuid || typeof uuid !== 'string') return false;
         return (await redis.sismember('online_users', uuid)) === 1;
     },
 

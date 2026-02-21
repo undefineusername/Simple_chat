@@ -265,15 +265,23 @@ io.on('connection', (socket: Socket) => {
         }
     });
 
-    socket.on('get_presence', async (targetUuid: string) => {
-        if (!targetUuid) return;
-        const online = await PresenceStore.isOnline(targetUuid);
-        const account = await Auth.getAccount(targetUuid);
-        socket.emit('presence_update', {
-            uuid: targetUuid,
-            status: online ? 'online' : 'offline',
-            publicKey: account?.dh_public_key
-        });
+    socket.on('get_presence', async (target: string | string[]) => {
+        if (!target) return;
+        const targets = Array.isArray(target) ? target : [target];
+
+        for (const uuid of targets) {
+            try {
+                const online = await PresenceStore.isOnline(uuid);
+                const account = await Auth.getAccount(uuid);
+                socket.emit('presence_update', {
+                    uuid: uuid,
+                    status: online ? 'online' : 'offline',
+                    publicKey: account?.dh_public_key
+                });
+            } catch (err) {
+                console.error(`❌ [Presence] Error for ${uuid}:`, err);
+            }
+        }
     });
 
     socket.on('report_user', async ({ targetUuid, reason }: { targetUuid: string, reason: string }) => {
