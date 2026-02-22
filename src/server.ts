@@ -10,7 +10,7 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import redis from './lib/redis.js';
 import { initDb } from './lib/db.js';
 import { StreamChat } from 'stream-chat';
-import { StreamVideoClient } from '@stream-io/node-sdk';
+import { StreamClient as StreamNodeClient } from '@stream-io/node-sdk';
 
 const STREAM_API_KEY = process.env.STREAM_API_KEY || '';
 const STREAM_API_SECRET = process.env.STREAM_API_SECRET || '';
@@ -19,8 +19,12 @@ if (!STREAM_API_KEY || !STREAM_API_SECRET) {
     console.warn('⚠️ [Stream] STREAM_API_KEY or STREAM_API_SECRET is missing. Stream features will not work.');
 }
 
+// stream-chat for Chat token generation
 const chatClient = new StreamChat(STREAM_API_KEY, STREAM_API_SECRET);
-const videoClient = new (StreamVideoClient as any)(STREAM_API_KEY, STREAM_API_SECRET);
+// @stream-io/node-sdk StreamClient for Video token generation
+const streamNodeClient = STREAM_API_KEY && STREAM_API_SECRET
+    ? new StreamNodeClient(STREAM_API_KEY, STREAM_API_SECRET)
+    : null;
 
 const app = express();
 app.use(cors());
@@ -91,6 +95,29 @@ const checkRateLimit = (socketId: string) => {
     return false;
 };
 
+/**
+ * Generate Stream Chat/Video tokens for a user and emit to socket.
+ * Used after register_master to avoid race where client requests token before auth completes.
+ */
+async function generateAndSendStreamTokens(socket: Socket, uuid: string): Promise<void> {
+    if (!STREAM_API_KEY || !STREAM_API_SECRET) return;
+    try {
+        const chatToken = chatClient.createToken(uuid);
+        const videoToken = streamNodeClient
+            ? streamNodeClient.generateUserToken({ user_id: uuid })
+            : chatToken;
+        socket.emit('stream_tokens', {
+            apiKey: STREAM_API_KEY,
+            chatToken,
+            videoToken
+        });
+        console.log(`🎫 [Stream] Auto-sent tokens for ${uuid}`);
+    } catch (err) {
+        console.error('❌ [Stream] Token generation error:', err);
+        socket.emit('error_msg', { message: 'Failed to generate Stream tokens' });
+    }
+}
+
 io.on('connection', (socket: Socket) => {
     console.log(`🔌 [Connected] ${socket.id}`);
 
@@ -124,10 +151,10 @@ io.on('connection', (socket: Socket) => {
         }
 
         try {
-            // Generate Chat Token
             const chatToken = chatClient.createToken(uuid);
-            // Generate Video Token
-            const videoToken = (videoClient as any).createToken({ user_id: uuid });
+            const videoToken = streamNodeClient
+                ? streamNodeClient.generateUserToken({ user_id: uuid })
+                : chatToken; // Fallback to chat token if node client not available
 
             socket.emit('stream_tokens', {
                 apiKey: STREAM_API_KEY,
@@ -140,6 +167,7 @@ io.on('connection', (socket: Socket) => {
             socket.emit('error_msg', { message: 'Failed to generate Stream tokens' });
         }
     });
+
 
     // Invite Code System
     socket.on('create_invite_code', async () => {
@@ -238,6 +266,10 @@ io.on('connection', (socket: Socket) => {
         await PresenceStore.setOnline(uuid, socket.id);
 
         socket.emit('registered', { type: 'master', uuid });
+
+        // Auto-send Stream tokens right after successful registration
+        // This avoids the race condition where client sends get_stream_token before auth completes
+        await generateAndSendStreamTokens(socket, uuid);
 
         // Flush offline queue
         const pending = await MessageQueue.flush(uuid);
