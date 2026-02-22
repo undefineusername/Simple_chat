@@ -9,6 +9,18 @@ import type { RelayPayload, RegisterMasterEvent } from './types/protocol.js';
 import { createAdapter } from '@socket.io/redis-adapter';
 import redis from './lib/redis.js';
 import { initDb } from './lib/db.js';
+import { StreamChat } from 'stream-chat';
+import { StreamVideoClient } from '@stream-io/node-sdk';
+
+const STREAM_API_KEY = process.env.STREAM_API_KEY || '';
+const STREAM_API_SECRET = process.env.STREAM_API_SECRET || '';
+
+if (!STREAM_API_KEY || !STREAM_API_SECRET) {
+    console.warn('⚠️ [Stream] STREAM_API_KEY or STREAM_API_SECRET is missing. Stream features will not work.');
+}
+
+const chatClient = new StreamChat(STREAM_API_KEY, STREAM_API_SECRET);
+const videoClient = new (StreamVideoClient as any)(STREAM_API_KEY, STREAM_API_SECRET);
 
 const app = express();
 app.use(cors());
@@ -18,6 +30,8 @@ console.log('🧐 [Diagnostic] Checking Environment Variables:');
 console.log(' - REDIS_URL:', process.env.REDIS_URL ? '✅ Found' : '❌ Missing');
 console.log(' - REDISHOST:', process.env.REDISHOST ? '✅ Found' : '❌ Missing');
 console.log(' - DATABASE_URL:', process.env.DATABASE_URL ? '✅ Found' : '❌ Missing');
+console.log(' - STREAM_API_KEY:', process.env.STREAM_API_KEY ? '✅ Found' : '❌ Missing');
+console.log(' - STREAM_API_SECRET:', process.env.STREAM_API_SECRET ? '✅ Found' : '❌ Missing');
 console.log(' - PORT:', process.env.PORT || '3000 (default)');
 
 // Health Check
@@ -98,6 +112,32 @@ io.on('connection', (socket: Socket) => {
         } catch (err) {
             console.error('❌ [Auth] Error in get_salt:', err);
             socket.emit('salt_not_found');
+        }
+    });
+
+    // GetStream Integration: Token Generation
+    socket.on('get_stream_token', async () => {
+        const uuid = socketToUuid.get(socket.id);
+        if (!uuid) {
+            console.warn(`⚠️ [Stream] Unauthenticated token request from ${socket.id}`);
+            return socket.emit('error_msg', { message: 'Not authenticated' });
+        }
+
+        try {
+            // Generate Chat Token
+            const chatToken = chatClient.createToken(uuid);
+            // Generate Video Token
+            const videoToken = (videoClient as any).createToken({ user_id: uuid });
+
+            socket.emit('stream_tokens', {
+                apiKey: STREAM_API_KEY,
+                chatToken,
+                videoToken
+            });
+            console.log(`🎫 [Stream] Generated tokens for ${uuid}`);
+        } catch (err) {
+            console.error('❌ [Stream] Token generation error:', err);
+            socket.emit('error_msg', { message: 'Failed to generate Stream tokens' });
         }
     });
 
@@ -268,20 +308,22 @@ io.on('connection', (socket: Socket) => {
     socket.on('get_presence', async (target: string | string[]) => {
         if (!target) return;
         const targets = Array.isArray(target) ? target : [target];
+        const results = [];
 
         for (const uuid of targets) {
             try {
                 const online = await PresenceStore.isOnline(uuid);
                 const account = await Auth.getAccount(uuid);
-                socket.emit('presence_update', {
+                results.push({
                     uuid: uuid,
-                    status: online ? 'online' : 'offline',
+                    status: online ? 'online' : 'offline' as 'online' | 'offline',
                     publicKey: account?.dh_public_key
                 });
             } catch (err) {
                 console.error(`❌ [Presence] Error for ${uuid}:`, err);
             }
         }
+        socket.emit('presence_all', results);
     });
 
     socket.on('report_user', async ({ targetUuid, reason }: { targetUuid: string, reason: string }) => {

@@ -32,7 +32,7 @@ redis.on('error', (err: any) => {
 });
 
 
-const QUEUE_TTL_SEC = 30 * 60; // 30 minutes
+const QUEUE_TTL_SEC = 120 * 60 * 60; // 120 hours
 
 export const PresenceStore = {
     async setOnline(uuid: string, socketId: string) {
